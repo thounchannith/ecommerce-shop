@@ -1,0 +1,125 @@
+from flask import Blueprint, jsonify, request
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.models import db, Order, OrderItem, Product, User
+from decimal import Decimal
+
+# Create a Blueprint for orders
+orders_bp = Blueprint('orders', __name__)
+
+# Get all orders for the authenticated user
+@orders_bp.route('/orders', methods=['GET'])
+@jwt_required()
+def get_orders():
+    user_id = get_jwt_identity()  # Get the current logged-in user's ID
+    orders = Order.query.filter_by(user_id=user_id).all()  # Retrieve orders for this user
+
+    if not orders:
+        return jsonify({"message": "No orders found for this user"}), 404
+
+    order_data = [{
+        "order_id": order.order_id,
+        "total": str(order.total),
+        "status": order.status,
+        "shipping_address": order.shipping_address,
+        "payment_status": order.payment_status,
+        "placed_at": order.placed_at,
+        "is_active": order.is_active
+    } for order in orders]
+
+    return jsonify({"orders": order_data}), 200
+
+
+# Get order by ID for the authenticated user
+@orders_bp.route('/orders/<int:order_id>', methods=['GET'])
+@jwt_required()
+def get_order_by_id(order_id):
+    user_id = get_jwt_identity()  # Get the current logged-in user's ID
+    order = Order.query.filter_by(order_id=order_id, user_id=user_id).first()  # Ensure order belongs to the user
+
+    if not order:
+        return jsonify({"message": "Order not found or you do not have permission to access this order"}), 404
+
+    return jsonify({
+        "order_id": order.order_id,
+        "user_id": order.user_id,
+        "total": str(order.total),
+        "status": order.status,
+        "shipping_address": order.shipping_address,
+        "payment_status": order.payment_status,
+        "placed_at": order.placed_at,
+        "is_active": order.is_active,
+        "order_items": [{
+            "order_item_id": item.order_item_id,
+            "product_id": item.product_id,
+            "quantity": item.quantity,
+            "price": str(item.price)
+        } for item in order.order_items]
+    }), 200
+
+
+# Get all active orders for the authenticated user
+@orders_bp.route('/orders/active', methods=['GET'])
+@jwt_required()
+def get_active_orders():
+    user_id = get_jwt_identity()  # Get the current logged-in user's ID
+    orders = Order.query.filter_by(user_id=user_id, is_active=True).all()  # Retrieve active orders for this user
+
+    return jsonify([{
+        "order_id": order.order_id,
+        "total": str(order.total),
+        "status": order.status,
+        "shipping_address": order.shipping_address,
+        "payment_status": order.payment_status,
+        "placed_at": order.placed_at
+    } for order in orders]), 200
+
+
+# Create a new order
+@orders_bp.route('/orders', methods=['POST'])
+def create_order():
+    data = request.get_json()
+
+    # Ensure 'user_id' and 'order_items' are provided
+    user_id = data.get('user_id')
+    order_items = data.get('order_items')
+    if not user_id or not order_items:
+        return jsonify({"message": "User ID and order items are required"}), 400
+
+    # Retrieve the user from the database
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    # Calculate the total price for the order
+    total = Decimal(0)
+    for item in order_items:
+        product = Product.query.get(item['product_id'])
+        if not product:
+            return jsonify({"message": f"Product with ID {item['product_id']} not found"}), 404
+        total += product.price * item['quantity']
+
+    # Create the order
+    order = Order(
+        user_id=user_id,
+        total=total,
+        shipping_address=data.get('shipping_address', ''),
+        payment_status=data.get('payment_status', False),
+        is_active=True
+    )
+
+    db.session.add(order)
+    db.session.commit()
+
+    # Create order items
+    for item in order_items:
+        order_item = OrderItem(
+            order_id=order.order_id,
+            product_id=item['product_id'],
+            quantity=item['quantity'],
+            price=item['price']
+        )
+        db.session.add(order_item)
+
+    db.session.commit()
+
+    return jsonify({"message": "Order created successfully", "order_id": order.order_id}), 201

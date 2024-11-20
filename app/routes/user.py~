@@ -1,0 +1,85 @@
+# app/services/user_service.py
+from flask import jsonify, request, Blueprint
+from werkzeug.security import generate_password_hash
+from app.models import User, db
+
+user_bp = Blueprint('user_bp', __name__)
+
+
+# Get user by ID
+@user_bp.route('/getByid/<int:user_id>', methods=['GET'])
+def get_user(user_id):
+    user = User.query.get(user_id)
+    if user:
+        return jsonify({
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'created_at': user.created_at,
+            'is_active': user.is_active
+        }), 200
+    return jsonify({"message": "User not found"}), 404
+
+
+# Get all users
+@user_bp.route('/getAll', methods=['GET'])
+def get_all_users():
+    users = User.query.all()
+    if users:
+        return jsonify([{
+            'id': user.id,
+            'name': user.name,
+            'email': user.email,
+            'created_at': user.created_at,
+            'is_active': user.is_active
+        } for user in users]), 200
+    return jsonify({"message": "No users found"}), 404
+
+
+# Update user by ID
+@user_bp.route('/update/<int:user_id>', methods=['PUT'])
+def update_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    data = request.json
+    user.name = data.get('name', user.name)
+    user.email = data.get('email', user.email)
+    user.is_active = data.get('is_active', user.is_active)
+
+    # Optionally update password if provided
+    password = data.get('password')
+    if password:
+        user.password = generate_password_hash(password)
+
+    db.session.commit()
+    return jsonify({
+        'id': user.id,
+        'name': user.name,
+        'email': user.email,
+        'is_active': user.is_active
+    }), 200
+
+
+# Delete user by ID (permanent deletion)
+@user_bp.route('/delete/<int:user_id>', methods=['DELETE'])
+def delete_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    db.session.delete(user)
+    db.session.commit()
+    return jsonify({"message": "User deleted successfully"}), 200
+
+
+# Soft delete user by ID (set is_deleted to True)
+def soft_delete_user(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    user.is_deleted = True
+    db.session.commit()
+    return jsonify({"message": "User soft-deleted successfully"}), 200

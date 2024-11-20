@@ -1,0 +1,113 @@
+from flask import Blueprint, request, jsonify
+from werkzeug.security import generate_password_hash, check_password_hash
+from flask_jwt_extended import jwt_required, get_jwt_identity
+from app.models import db, User
+from app.utils.utils import role_required
+
+user_bp = Blueprint('user', __name__)
+
+
+# Create a new user (Admin only)
+@user_bp.route('/add', methods=['POST'])
+@jwt_required()
+@role_required('Admin')
+def create_user():
+    data = request.json
+    name = data.get('name')
+    email = data.get('email')
+    password = data.get('password')
+    role = data.get('role', 'User')  # Default to 'User' role
+
+    # Check if the user already exists
+    if User.query.filter_by(email=email).first():
+        return jsonify({"message": "User with this email already exists!"}), 400
+
+    # Hash the password
+    hashed_password = generate_password_hash(password)
+
+    # Create the user
+    new_user = User(name=name, email=email, password=hashed_password, role=role)
+    db.session.add(new_user)
+    db.session.commit()
+
+    return jsonify({"message": "User created successfully!"}), 201
+
+
+# Get all users (Admin only)
+@user_bp.route('/', methods=['GET'])
+@jwt_required()
+@role_required('Admin')
+def get_users():
+    users = User.query.filter_by(is_active=True).all()  # Get active users only
+    user_list = [{"id": user.id, "name": user.name, "email": user.email, "role": user.role.name} for user in users]
+    return jsonify(user_list), 200
+
+
+# Get a user by ID (Admin or user themselves)
+@user_bp.route('/<int:id>', methods=['GET'])
+@jwt_required()
+def get_user(id):
+    current_user = get_jwt_identity()
+
+    # Admin can view any user, users can only view themselves
+    if current_user['role'] == 'Admin' or current_user['id'] == id:
+        user = User.query.filter_by(id=id, is_active=True).first()
+        if user:
+            return jsonify({
+                "id": user.id,
+                "name": user.name,
+                "email": user.email,
+                "role": user.role.name,
+                "created_at": user.created_at
+            }), 200
+        else:
+            return jsonify({"message": "User not found or inactive"}), 404
+
+    return jsonify({"message": "Access forbidden"}), 403
+
+
+# Update user details (Admin or user themselves)
+@user_bp.route('/<int:id>', methods=['PUT'])
+@jwt_required()
+def update_user(id):
+    current_user = get_jwt_identity()
+
+    # Admin can update any user, users can only update themselves
+    if current_user['role'] == 'Admin' or current_user['id'] == id:
+        user = User.query.get(id)
+        if not user:
+            return jsonify({"message": "User not found"}), 404
+
+        # Get updated data
+        name = request.json.get('name', user.name)
+        email = request.json.get('email', user.email)
+        password = request.json.get('password', None)
+
+        # If password is updated, hash it
+        if password:
+            user.password = generate_password_hash(password)
+
+        user.name = name
+        user.email = email
+
+        db.session.commit()
+
+        return jsonify({"message": "User updated successfully!"}), 200
+
+    return jsonify({"message": "Access forbidden"}), 403
+
+
+# Soft delete a user (Admin only)
+@user_bp.route('/<int:id>', methods=['DELETE'])
+@jwt_required()
+@role_required('Admin')
+def soft_delete_user(id):
+    user = User.query.get(id)
+    if not user:
+        return jsonify({"message": "User not found"}), 404
+
+    # Mark as inactive (soft delete)
+    user.is_active = False
+    db.session.commit()
+
+    return jsonify({"message": "User soft deleted successfully!"}), 200
